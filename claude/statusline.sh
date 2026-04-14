@@ -10,20 +10,26 @@ ORANGE='\033[38;5;208m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-# Parse JSON
-MODEL=$(echo "$input" | jq -r '.model.display_name // "?"')
-DIR=$(echo "$input" | jq -r '.workspace.current_dir // "."')
+# Parse JSON (single jq call)
+eval "$(echo "$input" | jq -r '
+  @sh "MODEL=\(.model.display_name // "?")",
+  @sh "DIR=\(.workspace.current_dir // ".")",
+  @sh "COST=\(.cost.total_cost_usd // 0)",
+  @sh "DURATION_MS=\(.cost.total_duration_ms // 0)",
+  @sh "PCT=\(.context_window.used_percentage // 0 | round)",
+  @sh "CTX_SIZE=\(.context_window.context_window_size // 200000)",
+  @sh "INPUT_TOKENS=\(.context_window.total_input_tokens // 0)",
+  @sh "OUTPUT_TOKENS=\(.context_window.total_output_tokens // 0)",
+  @sh "FIVE_H_PCT=\(.rate_limits.five_hour.used_percentage // empty)",
+  @sh "FIVE_H_RESET=\(.rate_limits.five_hour.resets_at // empty)",
+  @sh "SEVEN_D_PCT=\(.rate_limits.seven_day.used_percentage // empty)",
+  @sh "SEVEN_D_RESET=\(.rate_limits.seven_day.resets_at // empty)"
+' 2>/dev/null)"
 DIR_NAME="${DIR##*/}"
-COST=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
-DURATION_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
-PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | xargs printf '%.0f')
-CTX_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
-INPUT_TOKENS=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
-OUTPUT_TOKENS=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
-FIVE_H_PCT=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-FIVE_H_RESET=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
-SEVEN_D_PCT=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-SEVEN_D_RESET=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+# Integer guards
+PCT=${PCT:-0}; CTX_SIZE=${CTX_SIZE:-200000}
+INPUT_TOKENS=${INPUT_TOKENS:-0}; OUTPUT_TOKENS=${OUTPUT_TOKENS:-0}
+COST=${COST:-0}; DURATION_MS=${DURATION_MS:-0}
 
 # Format token counts
 fmt_tokens() {
@@ -43,22 +49,6 @@ USED=$(( PCT * CTX_SIZE / 100 ))
 USED_FMT=$(fmt_tokens "$USED")
 CTX_FMT=$(fmt_tokens "$CTX_SIZE")
 
-# Progress bar generator: make_bar <pct> <width>
-make_bar() {
-    local pct=$1 width=$2
-    local filled=$((pct * width / 100))
-    local empty=$((width - filled))
-    local color
-    if [ "$pct" -ge 90 ]; then color="$RED"
-    elif [ "$pct" -ge 75 ]; then color="$ORANGE"
-    elif [ "$pct" -ge 50 ]; then color="$YELLOW"
-    else color="$GREEN"; fi
-    local fill_str="" empty_str=""
-    [ "$filled" -gt 0 ] && fill_str=$(printf "%${filled}s" | tr ' ' '█')
-    [ "$empty" -gt 0 ] && empty_str=$(printf "%${empty}s" | tr ' ' '░')
-    echo "${color}${fill_str}${DIM}${empty_str}${RESET}"
-}
-
 # Bar color for percentage
 bar_color() {
     local pct=$1
@@ -66,6 +56,27 @@ bar_color() {
     elif [ "$pct" -ge 75 ]; then echo "$ORANGE"
     elif [ "$pct" -ge 50 ]; then echo "$YELLOW"
     else echo "$GREEN"; fi
+}
+
+# Progress bar generator: make_bar <pct> <width>
+make_bar() {
+    local pct=$1 width=$2
+    local filled=$((pct * width / 100))
+    local empty=$((width - filled))
+    local color=$(bar_color "$pct")
+    local fill_str="" empty_str=""
+    [ "$filled" -gt 0 ] && fill_str=$(printf "%${filled}s" | tr ' ' '█')
+    [ "$empty" -gt 0 ] && empty_str=$(printf "%${empty}s" | tr ' ' '░')
+    echo "${color}${fill_str}${DIM}${empty_str}${RESET}"
+}
+
+# Rate limit bar color based on usage vs time
+rate_bar_color() {
+    local usage_pct=$1 time_pct=$2
+    if [ "$usage_pct" -ge 90 ]; then echo "$RED"
+    elif [ "$time_pct" -le 0 ] || [ "$usage_pct" -le "$time_pct" ]; then echo "$GREEN"
+    elif [ "$usage_pct" -lt 50 ] || [ "$usage_pct" -le $((time_pct * 3 / 2)) ]; then echo "$YELLOW"
+    else echo "$ORANGE"; fi
 }
 
 # Rate limit bar with time marker: make_rate_bar <usage_pct> <time_pct> <width>
@@ -77,33 +88,16 @@ make_rate_bar() {
     # Clamp time_pos
     [ "$time_pos" -lt 0 ] && time_pos=0
     [ "$time_pos" -ge "$width" ] && time_pos=$((width - 1))
-    # Color based on usage vs time (cap at yellow when usage < 50%)
-    local color
-    if [ "$usage_pct" -ge 90 ]; then color="$RED"
-    elif [ "$time_pct" -le 0 ] || [ "$usage_pct" -le "$time_pct" ]; then color="$GREEN"
-    elif [ "$usage_pct" -lt 50 ] || [ "$usage_pct" -le $((time_pct * 3 / 2)) ]; then color="$YELLOW"
-    else color="$ORANGE"; fi
-    # Build bar char by char
-    local bar="" i
-    for ((i=0; i<width; i++)); do
-        if [ "$i" -eq "$time_pos" ]; then
-            bar="${bar}${RESET}${DIM}│${RESET}${color}"
-        elif [ "$i" -lt "$usage_pos" ]; then
-            bar="${bar}█"
-        else
-            bar="${bar}░"
-        fi
-    done
-    echo "${color}${bar}${RESET}"
-}
-
-# Rate limit bar color based on usage vs time
-rate_bar_color() {
-    local usage_pct=$1 time_pct=$2
-    if [ "$usage_pct" -ge 90 ]; then echo "$RED"
-    elif [ "$time_pct" -le 0 ] || [ "$usage_pct" -le "$time_pct" ]; then echo "$GREEN"
-    elif [ "$usage_pct" -lt 50 ] || [ "$usage_pct" -le $((time_pct * 3 / 2)) ]; then echo "$YELLOW"
-    else echo "$ORANGE"; fi
+    local color=$(rate_bar_color "$usage_pct" "$time_pct")
+    # Build fill + empty strings, then splice │ at time_pos
+    local fill="" empty_str=""
+    [ "$usage_pos" -gt 0 ] && fill=$(printf "%${usage_pos}s" | tr ' ' '█')
+    local empty_len=$((width - usage_pos))
+    [ "$empty_len" -gt 0 ] && empty_str=$(printf "%${empty_len}s" | tr ' ' '░')
+    local raw="${fill}${empty_str}"
+    local before="${raw:0:$time_pos}"
+    local after="${raw:$((time_pos + 1))}"
+    echo "${color}${before}${RESET}${DIM}│${RESET}${color}${after}${RESET}"
 }
 
 # Format remaining time from epoch: fmt_remaining <epoch>
