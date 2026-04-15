@@ -26,6 +26,12 @@ eval "$(echo "$input" | jq -r '
   @sh "SEVEN_D_RESET=\(.rate_limits.seven_day.resets_at // empty)"
 ' 2>/dev/null)"
 DIR_NAME="${DIR##*/}"
+
+# Work hours config (env override, default 9-22)
+WORK_START=${STATUSLINE_WORK_START:-9}
+WORK_END=${STATUSLINE_WORK_END:-22}
+WORK_HOURS=$((WORK_END - WORK_START))
+
 # Integer guards
 PCT=${PCT:-0}; CTX_SIZE=${CTX_SIZE:-200000}
 INPUT_TOKENS=${INPUT_TOKENS:-0}; OUTPUT_TOKENS=${OUTPUT_TOKENS:-0}
@@ -58,12 +64,12 @@ bar_color() {
     else echo "$GREEN"; fi
 }
 
-# Progress bar generator: make_bar <pct> <width>
+# Progress bar generator: make_bar <pct> <width> [color_override]
 make_bar() {
-    local pct=$1 width=$2
+    local pct=$1 width=$2 color_override=$3
     local filled=$((pct * width / 100))
     local empty=$((width - filled))
-    local color=$(bar_color "$pct")
+    local color=${color_override:-$(bar_color "$pct")}
     local fill_str="" empty_str=""
     [ "$filled" -gt 0 ] && fill_str=$(printf "%${filled}s" | tr ' ' '█')
     [ "$empty" -gt 0 ] && empty_str=$(printf "%${empty}s" | tr ' ' '░')
@@ -79,16 +85,16 @@ rate_bar_color() {
     else echo "$ORANGE"; fi
 }
 
-# Rate limit bar with time marker: make_rate_bar <usage_pct> <time_pct> <width>
+# Rate limit bar with time marker: make_rate_bar <usage_pct> <time_pct> <width> [color_override]
 # Shows usage fill + │ marker at time position to visualize pace
 make_rate_bar() {
-    local usage_pct=$1 time_pct=$2 width=$3
+    local usage_pct=$1 time_pct=$2 width=$3 color_override=$4
     local usage_pos=$((usage_pct * width / 100))
     local time_pos=$((time_pct * width / 100))
     # Clamp time_pos
     [ "$time_pos" -lt 0 ] && time_pos=0
     [ "$time_pos" -ge "$width" ] && time_pos=$((width - 1))
-    local color=$(rate_bar_color "$usage_pct" "$time_pct")
+    local color=${color_override:-$(rate_bar_color "$usage_pct" "$time_pct")}
     # Build fill + empty strings, then splice │ at time_pos
     local fill="" empty_str=""
     [ "$usage_pos" -gt 0 ] && fill=$(printf "%${usage_pos}s" | tr ' ' '█')
@@ -123,6 +129,58 @@ fmt_remaining() {
     fi
 }
 
+# Work hour detection
+NOW=$(date +%s)
+HOUR=$(date +%-H)
+IS_WORK_HOUR=true
+if [ "$HOUR" -lt "$WORK_START" ] || [ "$HOUR" -ge "$WORK_END" ]; then
+    IS_WORK_HOUR=false
+fi
+
+# Calculate active time percentage for 7d window
+# Counts overlap of each day's work hours [WORK_START, WORK_END] with a time range
+calc_active_pct() {
+    local ws=$1 we=$2 now=$3
+    local active_elapsed=0 total_active=0
+    # Get first and last day epochs (midnight)
+    local day_epoch
+    day_epoch=$(date -r "$ws" +%Y-%m-%d)
+    local cursor
+    cursor=$(date -j -f "%Y-%m-%d %H:%M:%S" "${day_epoch} 00:00:00" +%s 2>/dev/null)
+    local end_date
+    end_date=$(date -r "$we" +%Y-%m-%d)
+    local end_midnight
+    end_midnight=$(date -j -f "%Y-%m-%d %H:%M:%S" "${end_date} 00:00:00" +%s 2>/dev/null)
+
+    while [ "$cursor" -le "$end_midnight" ]; do
+        local d_str
+        d_str=$(date -r "$cursor" +%Y-%m-%d)
+        local a_start a_end
+        a_start=$(date -j -f "%Y-%m-%d %H:%M:%S" "${d_str} $(printf '%02d' $WORK_START):00:00" +%s 2>/dev/null)
+        a_end=$(date -j -f "%Y-%m-%d %H:%M:%S" "${d_str} $(printf '%02d' $WORK_END):00:00" +%s 2>/dev/null)
+
+        # Elapsed active: overlap of [a_start,a_end] with [ws,now]
+        local e_s e_e
+        e_s=$((a_start > ws ? a_start : ws))
+        e_e=$((a_end < now ? a_end : now))
+        [ "$e_e" -gt "$e_s" ] && active_elapsed=$((active_elapsed + e_e - e_s))
+
+        # Total active: overlap of [a_start,a_end] with [ws,we]
+        local t_s t_e
+        t_s=$((a_start > ws ? a_start : ws))
+        t_e=$((a_end < we ? a_end : we))
+        [ "$t_e" -gt "$t_s" ] && total_active=$((total_active + t_e - t_s))
+
+        cursor=$((cursor + 86400))
+    done
+
+    if [ "$total_active" -gt 0 ]; then
+        echo $((active_elapsed * 100 / total_active))
+    else
+        echo 0
+    fi
+}
+
 # Context window bar
 BAR=$(make_bar "$PCT" 20)
 BAR_COLOR=$(bar_color "$PCT")
@@ -143,8 +201,6 @@ fi
 COST_FMT=$(printf '$%.2f' "$COST")
 
 # Rate limits
-NOW=$(date +%s)
-
 if [ -n "$FIVE_H_PCT" ]; then
     FIVE_H_PCT_INT=$(printf '%.0f' "$FIVE_H_PCT")
     FIVE_H_REMAINING=$(fmt_remaining "$FIVE_H_RESET")
@@ -158,6 +214,11 @@ if [ -n "$FIVE_H_PCT" ]; then
         FIVE_H_BAR=$(make_bar "$FIVE_H_PCT_INT" 10)
         FIVE_H_COLOR=$(bar_color "$FIVE_H_PCT_INT")
     fi
+    # Non-work-hour: force red for bar and percentage
+    if [ "$IS_WORK_HOUR" = false ]; then
+        FIVE_H_BAR=$(make_rate_bar "$FIVE_H_PCT_INT" "$FIVE_H_TIME_PCT" 10 "$RED")
+        FIVE_H_COLOR="$RED"
+    fi
     FIVE_H_FMT="5h ${FIVE_H_BAR} ${FIVE_H_COLOR}${FIVE_H_PCT_INT}%${RESET}"
     [ -n "$FIVE_H_REMAINING" ] && FIVE_H_FMT="${FIVE_H_FMT} ${DIM}(${FIVE_H_REMAINING})${RESET}"
 else
@@ -168,7 +229,8 @@ if [ -n "$SEVEN_D_PCT" ]; then
     SEVEN_D_PCT_INT=$(printf '%.0f' "$SEVEN_D_PCT")
     SEVEN_D_REMAINING=$(fmt_remaining "$SEVEN_D_RESET")
     if [ -n "$SEVEN_D_RESET" ]; then
-        SEVEN_D_TIME_PCT=$(( (604800 - (SEVEN_D_RESET - NOW)) * 100 / 604800 ))
+        # Use active hours only for 7d time progress
+        SEVEN_D_TIME_PCT=$(calc_active_pct "$((SEVEN_D_RESET - 604800))" "$SEVEN_D_RESET" "$NOW")
         [ "$SEVEN_D_TIME_PCT" -lt 0 ] && SEVEN_D_TIME_PCT=0
         [ "$SEVEN_D_TIME_PCT" -gt 100 ] && SEVEN_D_TIME_PCT=100
         SEVEN_D_BAR=$(make_rate_bar "$SEVEN_D_PCT_INT" "$SEVEN_D_TIME_PCT" 14)
@@ -176,6 +238,11 @@ if [ -n "$SEVEN_D_PCT" ]; then
     else
         SEVEN_D_BAR=$(make_bar "$SEVEN_D_PCT_INT" 14)
         SEVEN_D_COLOR=$(bar_color "$SEVEN_D_PCT_INT")
+    fi
+    # Non-work-hour: force red for bar and percentage
+    if [ "$IS_WORK_HOUR" = false ]; then
+        SEVEN_D_BAR=$(make_rate_bar "$SEVEN_D_PCT_INT" "$SEVEN_D_TIME_PCT" 14 "$RED")
+        SEVEN_D_COLOR="$RED"
     fi
     SEVEN_D_FMT="7d ${SEVEN_D_BAR} ${SEVEN_D_COLOR}${SEVEN_D_PCT_INT}%${RESET}"
     [ -n "$SEVEN_D_REMAINING" ] && SEVEN_D_FMT="${SEVEN_D_FMT} ${DIM}(${SEVEN_D_REMAINING})${RESET}"
