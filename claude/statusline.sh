@@ -12,6 +12,7 @@ RESET='\033[0m'
 
 # Parse JSON (single jq call)
 eval "$(echo "$input" | jq -r '
+  @sh "SESSION_ID=\(.session_id // "")",
   @sh "MODEL=\(.model.display_name // "?")",
   @sh "DIR=\(.workspace.current_dir // ".")",
   @sh "COST=\(.cost.total_cost_usd // 0)",
@@ -54,6 +55,11 @@ RECV_FMT=$(fmt_tokens "$OUTPUT_TOKENS")
 USED=$(( PCT * CTX_SIZE / 100 ))
 USED_FMT=$(fmt_tokens "$USED")
 CTX_FMT=$(fmt_tokens "$CTX_SIZE")
+
+# Usable context ratio (80% of total is practical limit)
+USABLE_RATIO=80
+USABLE_PCT=$(( PCT * 100 / USABLE_RATIO ))
+[ "$USABLE_PCT" -gt 100 ] && USABLE_PCT=100
 
 # Bar color for percentage
 bar_color() {
@@ -250,21 +256,34 @@ else
     SEVEN_D_FMT="${DIM}7d --${RESET}"
 fi
 
-# Git branch & diff stats
+# Git branch & diff stats (cached by session_id, TTL 5s)
 BRANCH=""
-FILE_COUNT=0
-DIFF_ADD=0
-DIFF_DEL=0
-if git rev-parse --git-dir > /dev/null 2>&1; then
-    BRANCH=$(git branch --show-current 2>/dev/null)
-    SHORTSTAT=$(git diff --shortstat HEAD 2>/dev/null)
-    FILE_COUNT=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ file' | grep -oE '[0-9]+')
-    DIFF_ADD=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+')
-    DIFF_DEL=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+')
-    FILE_COUNT=${FILE_COUNT:-0}
-    DIFF_ADD=${DIFF_ADD:-0}
-    DIFF_DEL=${DIFF_DEL:-0}
+SHORTSTAT=""
+GIT_CACHE="/tmp/statusline-git-${SESSION_ID}"
+CACHE_HIT=false
+
+if [ -n "$SESSION_ID" ] && [ -f "$GIT_CACHE" ]; then
+    CACHE_AGE=$(( NOW - $(stat -f %m "$GIT_CACHE") ))
+    [ "$CACHE_AGE" -lt 5 ] && CACHE_HIT=true
 fi
+
+if [ "$CACHE_HIT" = true ]; then
+    BRANCH=$(sed -n '1p' "$GIT_CACHE")
+    SHORTSTAT=$(sed -n '2p' "$GIT_CACHE")
+else
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        BRANCH=$(git branch --show-current 2>/dev/null)
+        SHORTSTAT=$(git diff --shortstat HEAD 2>/dev/null)
+        if [ -n "$SESSION_ID" ]; then
+            printf '%s\n%s\n' "$BRANCH" "$SHORTSTAT" > "$GIT_CACHE"
+        fi
+    fi
+fi
+
+FILE_COUNT=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ file' | grep -oE '[0-9]+')
+DIFF_ADD=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+')
+DIFF_DEL=$(echo "$SHORTSTAT" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+')
+FILE_COUNT=${FILE_COUNT:-0}; DIFF_ADD=${DIFF_ADD:-0}; DIFF_DEL=${DIFF_DEL:-0}
 
 # Build two lines
 LINE1="${CYAN}[${MODEL}]${RESET} 📁 ${DIR_NAME}"
@@ -273,7 +292,8 @@ LINE1="${LINE1} ${DIM}|${RESET} ${FILE_COUNT} files ${GREEN}+${DIFF_ADD}${RESET}
 LINE1="${LINE1} ${DIM}|${RESET} ${DIM}↑${SEND_FMT} ↓${RECV_FMT}${RESET}"
 LINE1="${LINE1} ${DIM}|${RESET} ${YELLOW}${COST_FMT}${RESET}"
 
-LINE2="${BAR} ${BAR_COLOR}${PCT}%${RESET} ${DIM}(${USED_FMT}/${CTX_FMT})${RESET}"
+USABLE_COLOR=$(bar_color "$USABLE_PCT")
+LINE2="${BAR} ${BAR_COLOR}${PCT}%${RESET} ${USABLE_COLOR}[${USABLE_PCT}%]${RESET} ${DIM}(${USED_FMT}/${CTX_FMT})${RESET}"
 LINE2="${LINE2} ${DIM}|${RESET} ${FIVE_H_FMT}"
 LINE2="${LINE2} ${DIM}|${RESET} ${SEVEN_D_FMT}"
 # Uncomment to show duration:
