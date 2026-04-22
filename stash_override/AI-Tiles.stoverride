@@ -1,5 +1,5 @@
 name: AI 解锁状态检测
-icon: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/icons/AI.png
+icon: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/icons/AI.png
 desc: 在 Stash 首页折叠卡片中直观显示 ChatGPT、Claude、Gemini 的当前解锁状态
 category: tile
 
@@ -7,7 +7,7 @@ tiles:
   - name: Check_ChatGPT
     title: "🤖 ChatGPT"
     content: "检测中..."
-    icon: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/icons/openai.png
+    icon: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/icons/openai.png
     backgroundColor: "#10A37F"
     collapsed: true
     url: "https://chatgpt.com"
@@ -15,7 +15,7 @@ tiles:
   - name: Check_Claude
     title: "🧠 Claude"
     content: "检测中..."
-    icon: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/icons/claude.png
+    icon: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/icons/claude.png
     backgroundColor: "#D97757"
     collapsed: true
     url: "https://claude.ai"
@@ -23,18 +23,18 @@ tiles:
   - name: Check_Gemini
     title: "✨ Gemini"
     content: "检测中..."
-    icon: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/icons/googlegemini.png
+    icon: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/icons/googlegemini.png
     backgroundColor: "#1A73E8"
     collapsed: true
     url: "https://gemini.google.com"
 
 script-providers:
   Check_ChatGPT:
-    url: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/stash_js/chatgpt.js
+    url: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/stash_js/chatgpt.js
     interval: 86400
   Check_Claude:
-    url: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/stash_js/claude.js
+    url: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/stash_js/claude.js
     interval: 86400
   Check_Gemini:
-    url: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/stash_js/gemini.js
+    url: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/stash_js/gemini.js
     interval: 86400

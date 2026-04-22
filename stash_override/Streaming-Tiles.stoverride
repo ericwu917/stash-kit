@@ -1,5 +1,5 @@
 name: 流媒体解锁状态检测
-icon: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/icons/live-streaming.png
+icon: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/icons/live-streaming.png
 desc: 在 Stash 首页折叠卡片中直观显示 YouTube、Netflix 的当前解锁状态
 category: tile
 
@@ -22,8 +22,8 @@ tiles:
 
 script-providers:
   Check_YouTube:
-    url: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/stash_js/youtube_premium.js
+    url: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/stash_js/youtube_premium.js
     interval: 86400
   Check_Netflix:
-    url: https://fastly.jsdelivr.net/gh/taige/taige.github.io@master/stash_js/netflix.js
+    url: https://fastly.jsdelivr.net/gh/ericwu917/stash-kit@master/stash_js/netflix.js
     interval: 86400
