@@ -1,0 +1,5 @@
+# AI 工具相关第三方端点 → CategoryAI
+# datadog 遥测（KEYWORD 覆盖 *.datadoghq.com / browser-intake 等）、intercom 客服
+# 通用规则，无私有信息；私有自建出口规则不入本仓库
+DOMAIN-KEYWORD,datadoghq.com
+DOMAIN-SUFFIX,intercom.io
