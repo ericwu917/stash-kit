@@ -13,7 +13,9 @@ const match = url.match(/[?&]node=([^&]+)/);
 const node = match ? decodeURIComponent(match[1]) : "";
 const timeoutMatch = url.match(/[?&]timeout=(\d+)/);
 const timeout = timeoutMatch ? parseInt(timeoutMatch[1]) : 3;
-console.log("[fraud-check] url=" + url + " node=" + (node || "(empty)"));
+const modeMatch = url.match(/[?&]mode=([^&]+)/);
+const mode = modeMatch ? decodeURIComponent(modeMatch[1]) : "";   // mode=ip → 只取出口 IP(np whoami,便宜)
+console.log("[fraud-check] url=" + url + " node=" + (node || "(empty)") + " mode=" + (mode || "fraud"));
 
 if (!node) {
   // Serve Web UI page
@@ -27,11 +29,15 @@ if (!node) {
     },
   });
 } else {
-  console.log("[ippure] fetching https://my.ippure.com/v1/info via proxy=" + node);
+  // mode=ip → 穿节点打 np whoami(只回出口 IP,便宜、不耗 ippure 额度);否则 → ippure 全量 fraud
+  const ipMode = (mode === "ip");
+  const fetchUrl = ipMode ? "https://np.hqwu.io/?whoami" : "https://my.ippure.com/v1/info";
+  const tag = ipMode ? "whoami" : "ippure";
+  console.log("[" + tag + "] fetching " + fetchUrl + " via proxy=" + node);
   const startTime = Date.now();
   $httpClient.get(
     {
-      url: "https://my.ippure.com/v1/info",
+      url: fetchUrl,
       timeout: timeout,
       headers: {
         "X-Stash-Selected-Proxy": encodeURIComponent(node),
@@ -40,9 +46,9 @@ if (!node) {
     (error, response, data) => {
       const elapsed = Date.now() - startTime;
       const status = response ? response.status || response.statusCode : "null";
-      console.log("[ippure] node=" + node + " status=" + status + " elapsed=" + elapsed + "ms");
+      console.log("[" + tag + "] node=" + node + " status=" + status + " elapsed=" + elapsed + "ms");
       if (error) {
-        console.log("[ippure] ERROR node=" + node + " err=" + error);
+        console.log("[" + tag + "] ERROR node=" + node + " err=" + error);
         $done({
           response: {
             status: 502,
@@ -52,15 +58,19 @@ if (!node) {
         });
         return;
       }
-      console.log("[ippure] OK node=" + node + " body=" + (data || "").substring(0, 500));
-      // Merge elapsed into the response JSON
-      let body = data;
-      try {
-        const parsed = JSON.parse(data);
-        parsed.elapsed = elapsed;
-        body = JSON.stringify(parsed);
-      } catch (e) {
-        // If body is not JSON, return as-is
+      console.log("[" + tag + "] OK node=" + node + " body=" + (data || "").substring(0, 200));
+      let body;
+      if (ipMode) {
+        // np whoami 回纯文本 IP → 包成 JSON
+        body = JSON.stringify({ ip: (data || "").trim(), elapsed: elapsed });
+      } else {
+        // ippure 回 JSON,塞入 elapsed
+        body = data;
+        try {
+          const parsed = JSON.parse(data);
+          parsed.elapsed = elapsed;
+          body = JSON.stringify(parsed);
+        } catch (e) { /* 非 JSON 原样返回 */ }
       }
       $done({
         response: {
